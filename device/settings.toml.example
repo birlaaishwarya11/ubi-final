@@ -1,0 +1,17 @@
+# Copy to settings.toml on the CIRCUITPY drive (or rename) and fill in.
+# Reboot the device after changing.
+
+CIRCUITPY_WIFI_SSID = "your-network"
+CIRCUITPY_WIFI_PASSWORD = "your-password"
+
+# The Vercel deployment URL for the dashboard project (no trailing slash).
+BACKEND_URL = "https://dashboard-nine-delta-91.vercel.app"
+
+# Shared secret. Must match INGEST_DEVICE_SECRET set on the backend.
+# Generate one: `openssl rand -hex 32` and paste the same value in both places.
+INGEST_SECRET = "replace-me-with-shared-secret"
+
+DEVICE_ID = "immune-feather-1"
+WINDOW_SECONDS = "30"
+SAMPLE_HZ = "25"
+GSR_PIN = "A0"
