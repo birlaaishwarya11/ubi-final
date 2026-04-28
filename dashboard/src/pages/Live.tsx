@@ -1,9 +1,18 @@
-import { useActiveSession } from "../hooks/useActiveSession";
-import { useReadings } from "../hooks/useReadings";
+import type { useActiveSession } from "../hooks/useActiveSession";
+import type { useReadings } from "../hooks/useReadings";
 
-export function Live({ userId }: { userId: string }) {
-  const { readings, loading: readingsLoading } = useReadings(userId);
-  const { session, mine, loading: sessionLoading } = useActiveSession(userId);
+type ReadingsState = ReturnType<typeof useReadings>;
+type ActiveState = ReturnType<typeof useActiveSession>;
+
+export function Live({
+  readingsState,
+  activeState,
+}: {
+  readingsState: ReadingsState;
+  activeState: ActiveState;
+}) {
+  const { readings, loading: readingsLoading } = readingsState;
+  const { session, mine, loading: sessionLoading } = activeState;
 
   const heldByOther = !!session && !mine;
 
@@ -92,7 +101,7 @@ function Empty({
             <span className="absolute inset-0 rounded-full bg-good opacity-60 animate-ping" />
           )}
         </span>
-        {title}
+        <span>{title}</span>
       </div>
       <p className="text-xs text-slate-500 mt-2 max-w-sm mx-auto">{body}</p>
     </div>
@@ -108,8 +117,7 @@ function riskCell(label: 0 | 1 | undefined | null) {
   );
 }
 
-const fmt = (v: number | null | undefined) =>
-  v == null ? "—" : v.toFixed(1);
+const fmt = (v: number | null | undefined) => (v == null ? "—" : v.toFixed(1));
 
 function Th({ children }: { children: React.ReactNode }) {
   return <th className="text-left px-4 py-2 font-medium">{children}</th>;

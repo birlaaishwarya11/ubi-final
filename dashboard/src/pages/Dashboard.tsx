@@ -5,6 +5,7 @@ import { SensingControl } from "../components/SensingControl";
 import { SensorTile } from "../components/SensorTile";
 import { StatusCard } from "../components/StatusCard";
 import { TrendChart } from "../components/TrendChart";
+import { useActiveSession } from "../hooks/useActiveSession";
 import { useReadings } from "../hooks/useReadings";
 import type { Profile } from "../lib/supabase";
 import { Live } from "./Live";
@@ -14,8 +15,14 @@ type Tab = "overview" | "live";
 export function Dashboard({ session, profile }: { session: Session; profile: Profile }) {
   const userId = session.user.id;
   const [tab, setTab] = useState<Tab>("overview");
-  const { readings, baseline } = useReadings(userId);
 
+  // Both hooks are called exactly once at this level. Children get the
+  // values via props so we don't try to subscribe to the same Supabase
+  // realtime channel twice (which throws synchronously and unmounts).
+  const readingsState = useReadings(userId);
+  const activeState = useActiveSession(userId);
+
+  const { readings, baseline } = readingsState;
   const latest = readings[0];
   const latestInf = latest?.inference;
 
@@ -43,7 +50,7 @@ export function Dashboard({ session, profile }: { session: Session; profile: Pro
           <Tabs tab={tab} setTab={setTab} />
         </div>
 
-        <SensingControl userId={userId} />
+        <SensingControl activeState={activeState} />
 
         {tab === "overview" ? (
           <>
@@ -53,15 +60,15 @@ export function Dashboard({ session, profile }: { session: Session; profile: Pro
               lastSeen={latest?.window_start ?? null}
             />
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <SensorTile icon="heart"  label="Heart rate" value={latest?.heart_rate_bpm ?? null}    unit="bpm" baseline={baseline?.baseline_hr} />
-              <SensorTile icon="wave"   label="HRV"        value={latest?.hrv_ms ?? null}            unit="ms"  baseline={baseline?.baseline_hrv} />
-              <SensorTile icon="thermo" label="Skin temp"  value={latest?.skin_temp_c ?? null}       unit="°C"  baseline={baseline?.baseline_temp} />
-              <SensorTile icon="spark"  label="EDA"        value={latest?.eda_microsiemens ?? null}  unit="μS"  baseline={baseline?.baseline_eda} />
+              <SensorTile icon="heart"  label="Heart rate" value={latest?.heart_rate_bpm ?? null}   unit="bpm" baseline={baseline?.baseline_hr} />
+              <SensorTile icon="wave"   label="HRV"        value={latest?.hrv_ms ?? null}           unit="ms"  baseline={baseline?.baseline_hrv} />
+              <SensorTile icon="thermo" label="Skin temp"  value={latest?.skin_temp_c ?? null}      unit="°C"  baseline={baseline?.baseline_temp} />
+              <SensorTile icon="spark"  label="EDA"        value={latest?.eda_microsiemens ?? null} unit="μS"  baseline={baseline?.baseline_eda} />
             </div>
             <TrendChart data={trend} />
           </>
         ) : (
-          <Live userId={userId} />
+          <Live readingsState={readingsState} activeState={activeState} />
         )}
       </main>
     </div>

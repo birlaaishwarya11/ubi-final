@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { useActiveSession } from "../hooks/useActiveSession";
+import type { useActiveSession } from "../hooks/useActiveSession";
 
-export function SensingControl({ userId }: { userId: string }) {
-  const { session, loading, busy, mine, start, stop, deviceId } = useActiveSession(userId);
+type ActiveState = ReturnType<typeof useActiveSession>;
+
+export function SensingControl({ activeState }: { activeState: ActiveState }) {
+  const { session, loading, busy, mine, start, stop, deviceId } = activeState;
   const [err, setErr] = useState<string | null>(null);
 
-  const heldByOther = session && !mine;
+  const heldByOther = !!session && !mine;
 
   async function handleStart() {
     try {
@@ -25,10 +27,7 @@ export function SensingControl({ userId }: { userId: string }) {
     }
   }
 
-  const dot =
-    mine ? "bg-good" :
-    heldByOther ? "bg-warn" :
-    "bg-slate-300";
+  const dot = mine ? "bg-good" : heldByOther ? "bg-warn" : "bg-slate-300";
 
   return (
     <div className="bg-card rounded-2xl ring-1 ring-line p-5 flex items-center justify-between gap-4">
