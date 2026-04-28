@@ -1,0 +1,42 @@
+{
+  "model_version": "v1",
+  "model_file": "model_v1.onnx",
+  "input_name": "input",
+  "input_shape": [1, 4],
+  "output_name": "output",
+  "output_kind": "classifier_softmax",
+  "output_classes": [0, 1],
+
+  "axes": [
+    {
+      "name": "SkinTemperature",
+      "source": "sensor_windows.skin_temp_c",
+      "unit": "°C"
+    },
+    {
+      "name": "HeartRateVariability",
+      "source": "sensor_windows.hrv_ms",
+      "unit": "ms"
+    },
+    {
+      "name": "ElectrodermalActivity",
+      "source": "sensor_windows.eda_microsiemens",
+      "unit": "µS"
+    },
+    {
+      "name": "ImmuneActivationScore",
+      "source": "PLACEHOLDER",
+      "unit": "score 0-100",
+      "placeholder_value": 47.21,
+      "placeholder_note": "This axis is a label leak from the JHMC dataset (see ADR 0001 + MODEL_CARD.md). The device cannot produce this value. We feed the combined-class mean (Normal + Activation) so the model is biased toward 'uncertain'. Predictions from v1 are not reliable. Replace this whole axis in v2."
+    }
+  ],
+
+  "normalization": null,
+  "normalization_note": "Confirm with EI Studio: if the impulse's DSP block applies normalization (mean/std subtract or min/max scale), set this field accordingly. Raw Data block with no DSP = no normalization needed.",
+
+  "score_mapping": {
+    "immune_score": "softmax_prob_class_1 * 100",
+    "risk_label": "argmax_class"
+  }
+}

@@ -140,11 +140,38 @@ trail of who claimed the device when.
 | Service-role key leaked | Rotate in Supabase Studio → all `inferences`/`sensor_windows` writes from old key fail |
 | `INGEST_SECRET` leaked | Rotate Vercel env + device `settings.toml`; abuse is bounded to writing rows to whoever's currently active |
 
+## Inference worker (`/api/score-window`)
+
+A second Vercel serverless function, triggered by a Supabase database webhook
+on `INSERT INTO public.sensor_windows`. It reads the just-inserted row's
+features from the `feature_vectors` view, runs the bundled ONNX model, and
+inserts one row into `inferences`. The dashboard already reads `inferences`,
+so the score tile fills automatically — no UI change needed.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant DEV as Device
+    participant ING as /api/ingest
+    participant DB as Supabase
+    participant SC as /api/score-window
+    participant UI as Dashboard
+
+    DEV->>ING: POST window
+    ING->>DB: insert sensor_windows
+    DB->>SC: webhook (x-score-worker-secret)
+    SC->>DB: select feature_vectors where window_id=...
+    SC->>SC: ONNX inference
+    SC->>DB: insert inferences (immune_score, risk_label, model_version)
+    DB-->>UI: realtime INSERT on inferences
+    UI->>UI: score tile flips from "—" to number
+```
+
+See `docs/adr/0001-ml-inference-worker.md` for why this lives on Vercel
+(not Supabase Edge Functions) and what v1's known limits are.
+
 ## Future work
 
-- Move `inferences` from manual SQL inserts to a model-serving worker that
-  consumes new `sensor_windows` rows (Supabase Edge Function or polling
-  worker analogous to the legacy `supabase_to_edge.py`).
 - Per-device secrets (`device_secrets` table, hashed) once we have >1 device.
 - Local-flash buffering on the device for offline windows so we don't drop
   data on Wi-Fi blips.

@@ -1,0 +1,29 @@
+{
+  "features": [
+    "Age",
+    "Gender",
+    "BMI",
+    "HeartRate_bpm",
+    "HRV_ms",
+    "SkinTemperature_C",
+    "EDA_microsiemens",
+    "Race_2054_5",
+    "Race_2076_8",
+    "Race_2106_3",
+    "Race_2131_1",
+    "Race_2028_9",
+    "Race_2186_5"
+  ],
+  "label": "InflammationRiskLabel",
+  "race_one_hot": {
+    "source_column": "profiles.race_code",
+    "code_to_column": {
+      "2054-5": "Race_2054_5",
+      "2076-8": "Race_2076_8",
+      "2106-3": "Race_2106_3",
+      "2131-1": "Race_2131_1",
+      "2028-9": "Race_2028_9",
+      "2186-5": "Race_2186_5"
+    }
+  }
+}

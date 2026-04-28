@@ -35,3 +35,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+.vercel
+
+# macOS screenshots
+Screenshot*.png
