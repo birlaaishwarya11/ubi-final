@@ -21,206 +21,177 @@ import ssl
 import json
 
 import board
+import busio
+import analogio
 import wifi
 import socketpool
 import adafruit_requests
-import analogio
+import adafruit_adt7410
 
-from adafruit_mlx90614 import MLX90614
-
-try:
-    from adafruit_max30102 import MAX30102
-    HAS_MAX30102 = True
-except ImportError:
-    HAS_MAX30102 = False
-
-
-# ------------- Config (from settings.toml) -------------
-
+# -------- CONFIG (from settings.toml) --------
 WIFI_SSID = os.getenv("CIRCUITPY_WIFI_SSID")
 WIFI_PASSWORD = os.getenv("CIRCUITPY_WIFI_PASSWORD")
 
 BACKEND_URL = os.getenv("BACKEND_URL")
 INGEST_SECRET = os.getenv("INGEST_SECRET")
-DEVICE_ID = os.getenv("DEVICE_ID", "immune-feather-1")
+DEVICE_ID = os.getenv("DEVICE_ID", "immune-device-1")
 
-WINDOW_SECONDS = int(os.getenv("WINDOW_SECONDS", "30"))
+WINDOW_SECONDS = int(os.getenv("WINDOW_SECONDS", "10"))
 SAMPLE_HZ = int(os.getenv("SAMPLE_HZ", "25"))
-GSR_PIN_NAME = os.getenv("GSR_PIN", "A0")
 
-assert BACKEND_URL, "BACKEND_URL not set"
-assert INGEST_SECRET, "INGEST_SECRET not set"
+assert BACKEND_URL, "Missing BACKEND_URL"
+assert INGEST_SECRET, "Missing INGEST_SECRET"
 
 SAMPLE_PERIOD = 1.0 / SAMPLE_HZ
 
+# -------- I2C --------
+i2c = busio.I2C(board.SCL, board.SDA)
 
-# ------------- Hardware setup -------------
+# -------- TEMPERATURE (ADT7410) --------
+temp_sensor = adafruit_adt7410.ADT7410(i2c)
 
-i2c = board.I2C()
-mlx = MLX90614(i2c)
+# -------- PPG (MAX30102 → BPM) --------
+try:
+    from max30102 import MAX30102
+    ppg = MAX30102(i2c)
+except:
+    ppg = None
 
-if HAS_MAX30102:
-    try:
-        max30102 = MAX30102(i2c)
-    except Exception as e:
-        print("MAX30102 init failed:", e)
-        max30102 = None
-else:
-    max30102 = None
+# -------- ECG (AD8232 → HRV) --------
+ecg = analogio.AnalogIn(board.A0)
 
-gsr_pin = analogio.AnalogIn(getattr(board, GSR_PIN_NAME))
+# -------- GSR (GROVE → EDA) --------
+gsr = analogio.AnalogIn(board.A1)
 
-
-# ------------- Wi-Fi -------------
-
+# -------- WIFI --------
 http = None
-
 
 def connect_wifi():
     global http
     if not wifi.radio.connected:
-        print("Wi-Fi: connecting to", WIFI_SSID)
+        print("Connecting to WiFi...")
         wifi.radio.connect(WIFI_SSID, WIFI_PASSWORD)
+        print("Connected:", wifi.radio.ipv4_address)
+
     if http is None:
         pool = socketpool.SocketPool(wifi.radio)
         http = adafruit_requests.Session(pool, ssl.create_default_context())
-    print("Wi-Fi:", wifi.radio.ipv4_address)
 
-
-# ------------- Sensor sampling helpers -------------
-
-def gsr_microsiemens(raw_value):
-    """Crude conversion: raw ADC → voltage → conductance estimate.
-    Grove GSR output is a divider; this is a placeholder mapping good
-    enough for demoing trend, not absolute calibration."""
-    voltage = (raw_value * 3.3) / 65535
+# -------- HELPERS --------
+def gsr_microsiemens(raw):
+    voltage = (raw * 3.3) / 65535
     if voltage < 0.05:
         return 0.0
     return (voltage / 3.3) * 50.0
 
-
-def detect_peaks(samples, min_gap_samples):
-    """Return indices of local maxima above the running mean.
-    Simple threshold + minimum-interval peak detector for HR from PPG."""
-    if len(samples) < 3:
-        return []
-    mean = sum(samples) / len(samples)
-    threshold = mean + 0.4 * (max(samples) - mean)
+def detect_peaks(samples, min_gap):
     peaks = []
-    last = -min_gap_samples
     for i in range(1, len(samples) - 1):
-        if (
-            samples[i] > threshold
-            and samples[i] > samples[i - 1]
-            and samples[i] >= samples[i + 1]
-            and (i - last) >= min_gap_samples
-        ):
-            peaks.append(i)
-            last = i
+        if samples[i] > samples[i-1] and samples[i] >= samples[i+1]:
+            if not peaks or (i - peaks[-1]) >= min_gap:
+                peaks.append(i)
     return peaks
 
+def compute_bpm(ppg_samples):
+    if len(ppg_samples) < 10:
+        return None
+    peaks = detect_peaks(ppg_samples, int(SAMPLE_HZ * 0.4))
+    if len(peaks) < 2:
+        return None
+    intervals = [(peaks[i] - peaks[i-1]) / SAMPLE_HZ for i in range(1, len(peaks))]
+    avg = sum(intervals) / len(intervals)
+    return 60.0 / avg
 
-def compute_hr_hrv(ppg_samples, sample_hz):
-    """Returns (heart_rate_bpm, hrv_rmssd_ms) or (None, None)."""
-    if not ppg_samples:
-        return None, None
-    min_gap = max(1, int(sample_hz * 0.4))  # ≥ 0.4 s between beats (≤150 bpm)
-    peaks = detect_peaks(ppg_samples, min_gap)
+def compute_hrv(ecg_samples):
+    if len(ecg_samples) < 10:
+        return None
+    peaks = detect_peaks(ecg_samples, int(SAMPLE_HZ * 0.4))
     if len(peaks) < 3:
-        return None, None
-    intervals_ms = [
-        (peaks[i] - peaks[i - 1]) * 1000.0 / sample_hz for i in range(1, len(peaks))
-    ]
-    mean_rr = sum(intervals_ms) / len(intervals_ms)
-    hr = 60000.0 / mean_rr
-    if len(intervals_ms) < 2:
-        return hr, None
-    diffs = [intervals_ms[i] - intervals_ms[i - 1] for i in range(1, len(intervals_ms))]
-    rmssd = math.sqrt(sum(d * d for d in diffs) / len(diffs))
-    return hr, rmssd
+        return None
+    intervals = [(peaks[i] - peaks[i-1]) * 1000.0 / SAMPLE_HZ for i in range(1, len(peaks))]
+    diffs = [(intervals[i] - intervals[i-1]) for i in range(1, len(intervals))]
+    return math.sqrt(sum(d*d for d in diffs) / len(diffs))
 
-
-# ------------- Window aggregation -------------
-
-def collect_window():
-    ppg = []
-    temps = []
-    edas = []
-    deadline = time.monotonic() + WINDOW_SECONDS
-    while time.monotonic() < deadline:
-        loop_start = time.monotonic()
-        if max30102 is not None:
-            try:
-                _, ir = max30102.read()
-                ppg.append(ir)
-            except Exception:
-                pass
-        try:
-            temps.append(mlx.object_temperature)
-        except Exception:
-            pass
-        try:
-            edas.append(gsr_microsiemens(gsr_pin.value))
-        except Exception:
-            pass
-        elapsed = time.monotonic() - loop_start
-        if elapsed < SAMPLE_PERIOD:
-            time.sleep(SAMPLE_PERIOD - elapsed)
-
-    hr, hrv = compute_hr_hrv(ppg, SAMPLE_HZ)
-    skin_temp = sum(temps) / len(temps) if temps else None
-    eda = sum(edas) / len(edas) if edas else None
-
-    quality = 0
-    if hr is None:
-        quality |= 0x02  # poor PPG / not enough beats
-    if skin_temp is None:
-        quality |= 0x08
-
-    return {
-        "device_id": DEVICE_ID,
-        "window_seconds": WINDOW_SECONDS,
-        "heart_rate_bpm": round(hr, 1) if hr is not None else None,
-        "hrv_ms": round(hrv, 1) if hrv is not None else None,
-        "skin_temp_c": round(skin_temp, 2) if skin_temp is not None else None,
-        "eda_microsiemens": round(eda, 2) if eda is not None else None,
-        "quality_flag": quality,
-    }
-
-
-# ------------- POST to backend -------------
-
-def post_window(row):
+# -------- SEND TO BACKEND --------
+def post_data(payload):
     headers = {
         "Authorization": "Bearer " + INGEST_SECRET,
         "Content-Type": "application/json",
     }
     url = BACKEND_URL.rstrip("/") + "/api/ingest"
-    resp = http.post(url, data=json.dumps(row), headers=headers, timeout=15)
-    code = resp.status_code
-    text = resp.text
-    resp.close()
-    return code, text
+    response = http.post(url, data=json.dumps(payload), headers=headers)
+    response.close()
 
-
-# ------------- Main loop -------------
-
+# -------- MAIN --------
 connect_wifi()
-print("ImmuneSense device started. Window =", WINDOW_SECONDS, "s")
 
 while True:
+    ppg_samples = []
+    ecg_samples = []
+    eda_samples = []
+    temp_samples = []
+
+    start = time.monotonic()
+
+    while time.monotonic() - start < WINDOW_SECONDS:
+        loop_start = time.monotonic()
+
+        # TEMP
+        try:
+            temp_samples.append(temp_sensor.temperature)
+        except:
+            pass
+
+        # PPG → BPM
+        if ppg:
+            try:
+                _, ir = ppg.read()
+                ppg_samples.append(ir)
+            except:
+                pass
+
+        # ECG → HRV
+        try:
+            ecg_samples.append(ecg.value)
+        except:
+            pass
+
+        # GSR → EDA
+        try:
+            eda_samples.append(gsr_microsiemens(gsr.value))
+        except:
+            pass
+
+        elapsed = time.monotonic() - loop_start
+        if elapsed < SAMPLE_PERIOD:
+            time.sleep(SAMPLE_PERIOD - elapsed)
+
+    # COMPUTE
+    temp = sum(temp_samples)/len(temp_samples) if temp_samples else None
+    bpm = compute_bpm(ppg_samples)
+    hrv = compute_hrv(ecg_samples)
+    eda = sum(eda_samples)/len(eda_samples) if eda_samples else None
+
+    # PRINT
+    print(
+        "Temp: {:.2f} C | HRV: {} ms | BPM: {} | EDA: {:.2f} uS".format(
+            temp if temp else 0,
+            int(hrv) if hrv else 0,
+            int(bpm) if bpm else 0,
+            eda if eda else 0
+        )
+    )
+
+    # SEND
+    payload = {
+        "device_id": DEVICE_ID,
+        "temp_c": temp,
+        "hrv_ms": hrv,
+        "heart_rate_bpm": bpm,
+        "eda_microsiemens": eda
+    }
+
     try:
-        if not wifi.radio.connected:
-            connect_wifi()
-        row = collect_window()
-        print("Window:", row)
-        code, body = post_window(row)
-        if code == 201:
-            print("→ logged for user")
-        elif code == 409:
-            print("→ no active user (dashboard not started)")
-        else:
-            print("→ HTTP", code, body[:120])
+        post_data(payload)
     except Exception as e:
-        print("Loop error:", e)
-        time.sleep(2)
+        print("POST failed:", e)
