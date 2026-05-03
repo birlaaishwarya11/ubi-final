@@ -51,7 +51,7 @@ export function Live({
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
               <tr>
-                <Th>Elapsed</Th>
+                <Th>Window start</Th>
                 <Th>HR (bpm)</Th>
                 <Th>HRV (ms)</Th>
                 <Th>Temp (°C)</Th>
@@ -63,7 +63,7 @@ export function Live({
             <tbody>
               {readings.map((r) => (
                 <tr key={r.window_id} className="border-t border-line hover:bg-slate-50">
-                  <Td>{elapsed(r.window_start, readings[readings.length - 1]?.window_start)}</Td>
+                  <Td>{new Date(r.window_start).toLocaleTimeString()}</Td>
                   <Td>{fmt(r.heart_rate_bpm)}</Td>
                   <Td>{fmt(r.hrv_ms)}</Td>
                   <Td>{fmt(r.skin_temp_c)}</Td>
@@ -115,14 +115,6 @@ function riskCell(label: 0 | 1 | undefined | null) {
   ) : (
     <span className="text-good">Normal</span>
   );
-}
-
-function elapsed(windowStart: string, firstStart: string | undefined) {
-  if (!firstStart) return "0:00";
-  const diff = Math.floor((new Date(windowStart).getTime() - new Date(firstStart).getTime()) / 1000);
-  const mins = Math.floor(diff / 60);
-  const secs = diff % 60;
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
 const fmt = (v: number | null | undefined) => (v == null ? "—" : v.toFixed(1));
