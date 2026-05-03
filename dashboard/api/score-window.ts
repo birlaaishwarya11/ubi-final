@@ -7,14 +7,11 @@ import { fileURLToPath } from "node:url";
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const SCORE_WORKER_SECRET = process.env.SCORE_WORKER_SECRET!;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
-// Resolve paths relative to this file so the bundle layout is the same
-// locally, in `vercel dev`, and in deployed serverless functions.
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BUNDLE_DIR = path.join(HERE, "_model");
 const SCHEMA_PATH = path.join(BUNDLE_DIR, "feature_schema.json");
@@ -66,13 +63,6 @@ type WebhookPayload = {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "method_not_allowed" });
 
-  // Supabase webhooks send custom headers as configured in Studio. We use
-  // x-score-worker-secret to authenticate the call.
-  const auth = (req.headers["x-score-worker-secret"] ?? "") as string;
-  if (auth !== SCORE_WORKER_SECRET) {
-    return res.status(401).json({ error: "unauthorized" });
-  }
-
   await loadOnce();
   if (!schema) {
     return res.status(500).json({ error: "schema_load_failed", detail: loadError });
@@ -106,9 +96,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       v = mapAxisToFeature(axis.source, row);
     }
     if (v == null || Number.isNaN(v)) {
-      // Sensor channel missing or quality flag tripped. Skip scoring rather
-      // than feed a fake value: the dashboard already shows "—" for windows
-      // without a matching `inferences` row.
       return res.status(200).json({ skipped: "incomplete_features", axis: axis.name });
     }
     features.push(v);
@@ -143,8 +130,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
   if (insErr) {
-    // Same window webhooked twice → pkey on window_id collides with 23505.
-    // That's success: we already scored it.
     if ((insErr as { code?: string }).code === "23505") {
       return res.status(200).json({ already_scored: windowId });
     }
@@ -160,8 +145,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 function mapAxisToFeature(source: string, row: Record<string, unknown>): number | null {
-  // source is dotted: "sensor_windows.skin_temp_c" → look up "skin_temp_c" on
-  // the feature_vectors row (which already joins sensor_windows + profiles).
   const col = source.split(".").pop() ?? source;
   const v = row[col];
   if (v == null) return null;
