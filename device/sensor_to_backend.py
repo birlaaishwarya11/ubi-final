@@ -28,7 +28,7 @@ import socketpool
 import adafruit_requests
 import adafruit_adt7410
 
-# -------- CONFIG (from settings.toml) --------
+
 WIFI_SSID = os.getenv("CIRCUITPY_WIFI_SSID")
 WIFI_PASSWORD = os.getenv("CIRCUITPY_WIFI_PASSWORD")
 
@@ -44,13 +44,13 @@ assert INGEST_SECRET, "Missing INGEST_SECRET"
 
 SAMPLE_PERIOD = 1.0 / SAMPLE_HZ
 
-# -------- I2C --------
+
 i2c = busio.I2C(board.SCL, board.SDA)
 
-# -------- TEMPERATURE (ADT7410) --------
+
 temp_sensor = adafruit_adt7410.ADT7410(i2c)
 
-# -------- PPG (MAX30102 → BPM) --------
+
 try:
     from max30102 import MAX30102
     ppg = MAX30102(i2c)
