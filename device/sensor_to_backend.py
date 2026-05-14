@@ -1,5 +1,3 @@
-
-
 import time
 import math
 import os
@@ -14,24 +12,33 @@ import socketpool
 import adafruit_requests
 import adafruit_adt7410
 
-# wifi
 WIFI_SSID        = os.getenv("CIRCUITPY_WIFI_SSID")
 WIFI_PASSWORD    = os.getenv("CIRCUITPY_WIFI_PASSWORD")
 BACKEND_URL      = os.getenv("BACKEND_URL")
 INGEST_SECRET    = os.getenv("INGEST_SECRET")
 DEVICE_ID        = os.getenv("DEVICE_ID", "immune-feather-1")
 
-WINDOW_SECONDS   = 30        # transmission interval
-ECG_PPG_HZ       = 1         # sample ECG and PPG every 1 second
-TEMP_INTERVAL    = 5         # sample temperature every 5 seconds
-EDA_INTERVAL     = 10        # sample EDA every 10 seconds
+WINDOW_SECONDS   = 30
+ECG_PPG_HZ       = 1
+TEMP_INTERVAL    = 5
+EDA_INTERVAL     = 10
 
-assert BACKEND_URL,    "Missing BACKEND_URL in settings.toml"
-assert INGEST_SECRET,  "Missing INGEST_SECRET in settings.toml"
+# Expected physiological ranges — used for quality_flag bitmask
+TEMP_MIN_C       = 30.0
+TEMP_MAX_C       = 43.0
+EDA_MIN_US       = 0.0
+EDA_MAX_US       = 100.0
+BPM_MIN          = 30.0
+BPM_MAX          = 220.0
+HRV_MIN          = 0.0
+HRV_MAX          = 300.0
+
+assert BACKEND_URL,   "Missing BACKEND_URL in settings.toml"
+assert INGEST_SECRET, "Missing INGEST_SECRET in settings.toml"
 
 
-i2c          = busio.I2C(board.SCL, board.SDA)
-temp_sensor  = adafruit_adt7410.ADT7410(i2c)
+i2c         = busio.I2C(board.SCL, board.SDA)
+temp_sensor = adafruit_adt7410.ADT7410(i2c)
 
 try:
     from max30102 import MAX30102
@@ -44,8 +51,8 @@ except Exception:
 ecg = analogio.AnalogIn(board.A0)   # AD8232 ECG
 gsr = analogio.AnalogIn(board.A1)   # Grove GSR / EDA
 
-
 http = None
+
 
 def connect_wifi():
     global http
@@ -73,11 +80,7 @@ def detect_peaks(samples, min_gap):
     return peaks
 
 def compute_bpm_from_ecg(ecg_samples):
-    """
-    Derive BPM from AD8232 ECG R-peak intervals.
-    This makes the MAX30102 PPG redundant for heart rate measurement
-    and is the basis for removing the PPG sensor in the next hardware revision.
-    """
+   
     if len(ecg_samples) < 10:
         return None
     peaks = detect_peaks(ecg_samples, int(ECG_PPG_HZ * 0.4))
@@ -88,9 +91,7 @@ def compute_bpm_from_ecg(ecg_samples):
     return 60.0 / avg if avg > 0 else None
 
 def compute_hrv_from_ecg(ecg_samples):
-    """
-    Compute RMSSD HRV from AD8232 ECG R-peak intervals.
-    """
+   
     if len(ecg_samples) < 10:
         return None
     peaks = detect_peaks(ecg_samples, int(ECG_PPG_HZ * 0.4))
@@ -101,6 +102,40 @@ def compute_hrv_from_ecg(ecg_samples):
     return math.sqrt(sum(d * d for d in diffs) / len(diffs))
 
 
+
+def compute_quality_flag(bpm, hrv, temp, eda, ppg_present):
+ 
+    any_data = any(x is not None for x in [bpm, hrv, temp, eda])
+    if not any_data:
+        return 0  # complete data loss
+
+    flag = 0
+
+    # Bit 2 (value 4) — poor PPG: sensor not found or no readings
+    if not ppg_present:
+        flag |= 4
+
+    # Bit 3 (value 8) — low ECG: BPM or HRV missing or out of range
+    ecg_bad = (
+        bpm is None or hrv is None
+        or not (BPM_MIN <= bpm <= BPM_MAX)
+        or not (HRV_MIN <= hrv <= HRV_MAX)
+    )
+    if ecg_bad:
+        flag |= 8
+
+    # Bit 4 (value 16) — temperature out of physiological range
+    temp_bad = temp is None or not (TEMP_MIN_C <= temp <= TEMP_MAX_C)
+    if temp_bad:
+        flag |= 16
+
+    # If no faults detected, set bit 0 to signal good quality
+    if flag == 0:
+        flag = 1
+
+    return flag
+
+
 def post_window(payload):
     headers = {
         "Authorization": "Bearer " + INGEST_SECRET,
@@ -109,6 +144,7 @@ def post_window(payload):
     url = BACKEND_URL.rstrip("/") + "/api/ingest"
     response = http.post(url, data=json.dumps(payload), headers=headers)
     response.close()
+
 
 connect_wifi()
 
@@ -162,16 +198,14 @@ while True:
 
         time.sleep(0.05)
 
-
+    
     temp = sum(temp_samples) / len(temp_samples) if temp_samples else None
     eda  = sum(eda_samples)  / len(eda_samples)  if eda_samples  else None
+    bpm  = compute_bpm_from_ecg(ecg_samples)
+    hrv  = compute_hrv_from_ecg(ecg_samples)
 
-    # BPM and HRV derived from ECG R-peaks
-    bpm = compute_bpm_from_ecg(ecg_samples)
-    hrv = compute_hrv_from_ecg(ecg_samples)
-
-    quality_flag = 1 if all(x is not None for x in [temp, bpm, hrv, eda]) else 0
-
+    ppg_present = ppg is not None and len(ppg_samples) > 0
+    quality_flag = compute_quality_flag(bpm, hrv, temp, eda, ppg_present)
 
     print(
         "Temp: {:.2f} C | BPM: {} | HRV: {} ms | EDA: {:.2f} uS | Quality: {}".format(
@@ -179,11 +213,10 @@ while True:
             int(bpm) if bpm else 0,
             int(hrv) if hrv else 0,
             eda or 0,
-            quality_flag
+            quality_flag,
         )
     )
 
-    
     payload = {
         "device_id":        DEVICE_ID,
         "window_seconds":   WINDOW_SECONDS,
@@ -191,7 +224,7 @@ while True:
         "heart_rate_bpm":   bpm,
         "hrv_ms":           hrv,
         "eda_microsiemens": eda,
-        "quality_flag":     quality_flag
+        "quality_flag":     quality_flag,
     }
 
     try:
