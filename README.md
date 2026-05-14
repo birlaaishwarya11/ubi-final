@@ -138,13 +138,10 @@ for the rationale and `ml/MODEL_CARD.md` for the model itself.
 5. Reboot. Watch the serial console — a line will print every 30 seconds showing temp, BPM, HRV, EDA, and quality flag, followed by "Window posted successfully".
 
 **Sensors used in the final prototype:**
-- AD8232 — ECG, from which BPM and HRV are derived via R-peak detection
+- AD8232 — ECG, HRV is derived via R-peak detection
 - ADT7410 — skin temperature (I2C)
 - Grove GSR — electrodermal activity (EDA)
-
-The MAX30102 PPG sensor is no longer used. BPM and HRV are derived directly
-from the AD8232 ECG signal, making the optical PPG sensor redundant. This
-matches the future-work direction described in the paper (section 11).
+- MAX30102 — PPG sensor for pulse and BPM 
 
 **quality_flag bitmask** written by the firmware and stored in `sensor_windows`:
 
