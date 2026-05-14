@@ -58,6 +58,7 @@ export function Live({
                 <Th>EDA (μS)</Th>
                 <Th>Score</Th>
                 <Th>Risk</Th>
+                <Th>Signal</Th>
               </tr>
             </thead>
             <tbody>
@@ -70,6 +71,7 @@ export function Live({
                   <Td>{fmt(r.eda_microsiemens)}</Td>
                   <Td>{fmt(r.inference?.immune_score)}</Td>
                   <Td>{riskCell(r.inference?.risk_label)}</Td>
+                  <Td>{qualityCell(r.quality_flag)}</Td>
                 </tr>
               ))}
             </tbody>
@@ -77,6 +79,33 @@ export function Live({
         </div>
       )}
     </div>
+  );
+}
+
+function qualityCell(flag: number | undefined) {
+  if (flag == null) return <span className="text-slate-400">—</span>;
+
+  // Perfect signal
+  if (flag === 1) {
+    return <span className="text-good font-medium">Good</span>;
+  }
+
+  // No data at all
+  if (flag === 0) {
+    return <span className="text-bad font-medium">No data</span>;
+  }
+
+  // Decode bitmask — matches schema comment in 0001_init.sql
+  const issues: string[] = [];
+  if (flag & 1) issues.push("motion");
+  if (flag & 2) issues.push("poor PPG");
+  if (flag & 4) issues.push("low ECG");
+  if (flag & 8) issues.push("temp range");
+
+  return (
+    <span className="text-warn font-medium" title={issues.join(", ")}>
+      Degraded
+    </span>
   );
 }
 
