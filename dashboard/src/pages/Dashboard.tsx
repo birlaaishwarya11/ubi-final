@@ -16,9 +16,6 @@ export function Dashboard({ session, profile }: { session: Session; profile: Pro
   const userId = session.user.id;
   const [tab, setTab] = useState<Tab>("overview");
 
-  // Both hooks are called exactly once at this level. Children get the
-  // values via props so we don't try to subscribe to the same Supabase
-  // realtime channel twice (which throws synchronously and unmounts).
   const readingsState = useReadings(userId);
   const activeState = useActiveSession(userId);
 
@@ -58,6 +55,9 @@ export function Dashboard({ session, profile }: { session: Session; profile: Pro
               score={latestInf?.immune_score ?? null}
               label={latestInf?.risk_label ?? null}
               lastSeen={latest?.window_start ?? null}
+              qualityFlag={latest?.quality_flag ?? null}
+              windowCount={readings.length}
+              hasBaseline={baseline !== null}
             />
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <SensorTile icon="heart"  label="Heart rate" value={latest?.heart_rate_bpm ?? null}   unit="bpm" baseline={baseline?.baseline_hr} />
