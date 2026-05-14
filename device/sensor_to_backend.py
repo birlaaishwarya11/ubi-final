@@ -23,7 +23,6 @@ ECG_PPG_HZ       = 1
 TEMP_INTERVAL    = 5
 EDA_INTERVAL     = 10
 
-# Expected physiological ranges — used for quality_flag bitmask
 TEMP_MIN_C       = 30.0
 TEMP_MAX_C       = 43.0
 EDA_MIN_US       = 0.0
@@ -36,7 +35,6 @@ HRV_MAX          = 300.0
 assert BACKEND_URL,   "Missing BACKEND_URL in settings.toml"
 assert INGEST_SECRET, "Missing INGEST_SECRET in settings.toml"
 
-
 i2c         = busio.I2C(board.SCL, board.SDA)
 temp_sensor = adafruit_adt7410.ADT7410(i2c)
 
@@ -48,8 +46,8 @@ except Exception:
     ppg = None
     print("MAX30102 not found — PPG disabled")
 
-ecg = analogio.AnalogIn(board.A0)   # AD8232 ECG
-gsr = analogio.AnalogIn(board.A1)   # Grove GSR / EDA
+ecg = analogio.AnalogIn(board.A0)
+gsr = analogio.AnalogIn(board.A1)
 
 http = None
 
@@ -71,6 +69,7 @@ def gsr_microsiemens(raw):
         return 0.0
     return (voltage / 3.3) * 50.0
 
+
 def detect_peaks(samples, min_gap):
     peaks = []
     for i in range(1, len(samples) - 1):
@@ -79,19 +78,21 @@ def detect_peaks(samples, min_gap):
                 peaks.append(i)
     return peaks
 
-def compute_bpm_from_ecg(ecg_samples):
-   
-    if len(ecg_samples) < 10:
+
+def compute_bpm_from_ppg(ppg_samples):
+    """Derive BPM from MAX30102 IR samples via peak detection."""
+    if len(ppg_samples) < 10:
         return None
-    peaks = detect_peaks(ecg_samples, int(ECG_PPG_HZ * 0.4))
+    peaks = detect_peaks(ppg_samples, int(ECG_PPG_HZ * 0.4))
     if len(peaks) < 2:
         return None
     intervals = [(peaks[i] - peaks[i - 1]) / ECG_PPG_HZ for i in range(1, len(peaks))]
     avg = sum(intervals) / len(intervals)
     return 60.0 / avg if avg > 0 else None
 
+
 def compute_hrv_from_ecg(ecg_samples):
-   
+    """Derive HRV from AD8232 ECG samples via R-peak detection."""
     if len(ecg_samples) < 10:
         return None
     peaks = detect_peaks(ecg_samples, int(ECG_PPG_HZ * 0.4))
@@ -102,34 +103,27 @@ def compute_hrv_from_ecg(ecg_samples):
     return math.sqrt(sum(d * d for d in diffs) / len(diffs))
 
 
-
 def compute_quality_flag(bpm, hrv, temp, eda, ppg_present):
- 
     any_data = any(x is not None for x in [bpm, hrv, temp, eda])
     if not any_data:
-        return 0  # complete data loss
+        return 0
 
     flag = 0
 
-    # Bit 2 (value 4) — poor PPG: sensor not found or no readings
     if not ppg_present:
         flag |= 4
 
-    # Bit 3 (value 8) — low ECG: BPM or HRV missing or out of range
     ecg_bad = (
-        bpm is None or hrv is None
-        or not (BPM_MIN <= bpm <= BPM_MAX)
+        hrv is None
         or not (HRV_MIN <= hrv <= HRV_MAX)
     )
     if ecg_bad:
         flag |= 8
 
-    # Bit 4 (value 16) — temperature out of physiological range
     temp_bad = temp is None or not (TEMP_MIN_C <= temp <= TEMP_MAX_C)
     if temp_bad:
         flag |= 16
 
-    # If no faults detected, set bit 0 to signal good quality
     if flag == 0:
         flag = 1
 
@@ -164,7 +158,6 @@ while True:
     while time.monotonic() - window_start < WINDOW_SECONDS:
         now = time.monotonic()
 
-        # ECG and PPG — every 1 second
         if now - last_ecg_ppg_sample >= ECG_PPG_HZ:
             try:
                 ecg_samples.append(ecg.value)
@@ -180,7 +173,6 @@ while True:
 
             last_ecg_ppg_sample = now
 
-        # Temperature — every 5 seconds
         if now - last_temp_sample >= TEMP_INTERVAL:
             try:
                 temp_samples.append(temp_sensor.temperature)
@@ -188,7 +180,6 @@ while True:
                 pass
             last_temp_sample = now
 
-        # EDA — every 10 seconds
         if now - last_eda_sample >= EDA_INTERVAL:
             try:
                 eda_samples.append(gsr_microsiemens(gsr.value))
@@ -198,10 +189,9 @@ while True:
 
         time.sleep(0.05)
 
-    
     temp = sum(temp_samples) / len(temp_samples) if temp_samples else None
     eda  = sum(eda_samples)  / len(eda_samples)  if eda_samples  else None
-    bpm  = compute_bpm_from_ecg(ecg_samples)
+    bpm  = compute_bpm_from_ppg(ppg_samples)
     hrv  = compute_hrv_from_ecg(ecg_samples)
 
     ppg_present = ppg is not None and len(ppg_samples) > 0
